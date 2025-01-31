@@ -1,3 +1,62 @@
+from controller import Robot
+import random
+import numpy.random as rand
+import math 
+
+import numpy as np
+import pandas as pd
+
+TIME_STEP = 64          #Time step for phhyscial simulation
+SAMPLE_TIME = TIME_STEP #Time step for Sensor/controller 
+
+# #Custom codes
+# #sourcehttps://medium.com/@aleksej.gudkov/python-pid-controller-example-a-complete-guide-5f35589eec86
+class PID():
+    def __init__(self, Kp, Ki, Kd, dt):
+        self.Kp = Kp
+        self.Ki = Ki
+        self.Kd = Kd
+        
+        self.dt = dt
+
+        self.previous_error = 0
+        self.integral = 0
+ 
+     # #Behaves like the TF given thhe error will calculate the control signal
+    def compute(self, dt, error):
+        # Proportional term
+        P_out = self.Kp * error
+        
+        # Integral term
+        self.integral += error * dt
+        I_out = self.Ki * self.integral
+        
+        # Derivative term
+        derivative = (error - self.previous_error) / dt
+        D_out = self.Kd * derivative
+        
+        # Compute total output
+        output = P_out + I_out + D_out
+        
+        # Update previous error
+        self.previous_error = error
+
+        return output
+        
+    def saturate(self, signal, limits):
+       if abs(signal) > abs(limits): 
+           return abs(limits) * math.copysign(1,signal)
+       
+       return signal 
+  
+  
+# #Code to generate noise for our signal such that the noise will have a normal distribiution about signal/10
+def Noise(signal, sigma=0.05):
+    return rand.normal(signal/10 ,sigma,1)[0]
+
+# #._.._.._.._.._.._.._.._.._.._.._.._.._.._.._.._.._.._.._.._.._.._.
+# #._.._.._.._.._.._.._.._.._.._.._.._.._.._.._.._.._.._.._.._.._.._.   
+
 import pandas as pd
 import numpy as np
 import os
@@ -263,24 +322,58 @@ class GeneticAlg():
         print("MODE2")
         return self.next_gen()
 
-
+#Using the genetic algorithm
 ga = GeneticAlg(pop_size= 10 ,step_size=10 , mutation_rate=0.1, cross_over_rate=0.3, stm_aneal_rate=0.2, file_path="./data.csv", start_point_init_pop= 0.01, end_point_init_pop = 1000, decay_rate=0.1)
 
-print(ga.save(1 , ga.get_genom()))
-print(ga.generation_cur)
-print(ga.get_genom())
-# crossed = ga.cross_over([1,2,3],[4,5,6])[0]
-# mutated = ga.mutation(crossed)
+genom = ga.get_genom()
 
-# print(crossed)
-# print(mutated)
+controller = PID(genom["Kp"], genom["Ki"], genom["Kd"], SAMPLE_TIME)
 
+# #._.._.._.._.._.._.._.._.._.._.._.._.._.._.._.._.._.._.._.._.._.._.
+# #._.._.._.._.._.._.._.._.._.._.._.._.._.._.._.._.._.._.._.._.._.._.     
+# #Setup for the sensors and plant
+robot = Robot()
 
-# for j in range(ga.pop_size):    #This loop goes over the entire generation 
-#     genom = ga.generation_cur.iloc[j]   #Getting one sspecific genom
+#Motor
+m = robot.getDevice("rotational motor")
+m.setPosition(float('inf'))                   #Must be set or the setVelocity wont work
 
-#     #Setting up the controller 
-#     controller = PID(Kp=genom["Kp"],Ki=genom["Ki"],Kd=genom["Kd"], dt = SAMPLE_TIME)
+#Sensor
+sensor = robot.getDevice("position sensor")
+sensor.enable(SAMPLE_TIME)
 
-
+#Using the genetic algorithem
+i=0
+#Simulation loop
+while (robot.step(TIME_STEP) != -1):
+    #Itteration counter
+    i +=1
     
+    #Finding the e(t) = 0 - y(t)
+    error =-1 * sensor.getValue()
+    
+    
+    #Finding the controller's signal part
+    u = controller.compute(error=error, dt=SAMPLE_TIME)
+    #Saturate the signal
+    u_sat = controller.saturate(signal=u, limits=90) 
+    
+    #Noise
+    d = Noise(signal = u_sat)
+    
+    #Applying noise every 10 steps
+    if i%10 != 0:
+        d = 0
+    
+    #Determining the signals 
+    #print("Saturated control signal:", u_sat)
+    #print("noise:", d)
+    
+    #Theta1_dot
+    m.setVelocity(u_sat + d)
+    
+    #Finding the simulation time
+    #print(robot.getTime())
+  
+# #._.._.._.._.._.._.._.._.._.._.._.._.._.._.._.._.._.._.._.._.._.._.
+# #._.._.._.._.._.._.._.._.._.._.._.._.._.._.._.._.._.._.._.._.._.._.   
